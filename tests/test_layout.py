@@ -104,9 +104,81 @@ def test_dense_never_needs_more_slides_than_compact():
         assert dense <= compact
 
 
-def test_pack_fewest_slides_prefers_compact_when_it_fits():
+def test_pack_fewest_slides_prefers_shuffled_compact_when_it_fits():
+    # First shuffle attempt = compact/shuffle at the same seed; six small boxes always fit.
     boxes = _random_boxes(6, 1)
-    assert pack_fewest_slides(boxes) == pack(boxes, mode="compact")
+    assert pack_fewest_slides(boxes) == pack(boxes, mode="compact", order="shuffle")
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_shuffled_order_keeps_all_invariants(seed):
+    boxes = _random_boxes(40, seed)
+    _check_invariants(boxes, pack(boxes, mode="compact", order="shuffle", seed=seed))
+
+
+def test_shuffle_is_deterministic_and_actually_reorders():
+    boxes = _random_boxes(25, 7)
+    assert pack(boxes, order="shuffle", seed=3) == pack(boxes, order="shuffle", seed=3)
+    assert pack(boxes, order="shuffle", seed=3) != pack(boxes, order="shuffle", seed=4)
+    assert pack(boxes, order="shuffle", seed=3) != pack(boxes, order="size", seed=3)
+
+
+def test_auto_layout_breaks_the_tallest_at_the_top_pattern():
+    """v1.0.0 placed largest-first, so every deck showed its long shout-outs
+    clustered in the top rows; the auto ladder must not read that way."""
+    tall, short = 561_000, 187_000
+    boxes = [Box(i, 1_500_000, tall if i < 8 else short) for i in range(16)]
+    placements = pack_fewest_slides(boxes)
+    _check_invariants(boxes, placements)
+    assert max(p.slide for p in placements) == 0
+    heights_top_down = [
+        b.height_emu for _, b in sorted(zip(placements, boxes), key=lambda t: (t[0].y_emu, t[0].x_emu))
+    ]
+    first_short = heights_top_down.index(short)
+    assert tall in heights_top_down[first_short + 1 :]  # some tall box sits below a short one
+
+
+def test_unknown_order_raises():
+    with pytest.raises(ValueError):
+        pack(_random_boxes(3, 0), order="alphabetical")
+
+
+@pytest.mark.parametrize("mode", MODES)
+@pytest.mark.parametrize("seed", range(3))
+def test_band_order_keeps_all_invariants(mode, seed):
+    boxes = _random_boxes(40, seed)
+    _check_invariants(boxes, pack(boxes, mode=mode, order="bands", seed=seed))
+
+
+@pytest.mark.parametrize("n", [40, 70])  # one-slide and overflow sets
+def test_band_order_never_costs_a_slide(n):
+    # Band permutation must be capacity-neutral: it only reorders rows vertically.
+    for seed in range(3):
+        boxes = _random_boxes(n, seed)
+        for mode in MODES:
+            size_slides = max(p.slide for p in pack(boxes, mode=mode, order="size", seed=seed))
+            band_slides = max(p.slide for p in pack(boxes, mode=mode, order="bands", seed=seed))
+            assert band_slides == size_slides
+
+
+def test_band_order_breaks_the_row_height_gradient():
+    # Six tall + six short boxes, three to a row: size order stacks the two tall
+    # rows above the two short rows; band order must not keep that gradient.
+    tall, short = 561_000, 187_000
+    boxes = [Box(i, 2_700_000, tall if i < 6 else short) for i in range(12)]
+    placements = pack(boxes, mode="compact", order="bands")
+    _check_invariants(boxes, placements)
+    heights_top_down = [
+        b.height_emu for _, b in sorted(zip(placements, boxes), key=lambda t: (t[0].y_emu, t[0].x_emu))
+    ]
+    first_short = heights_top_down.index(short)
+    assert tall in heights_top_down[first_short + 1 :]
+
+
+def test_band_order_with_a_single_row_matches_size_order():
+    # One band has nothing to permute, so the layouts must be identical.
+    boxes = [Box(i, 1_000_000, 187_000) for i in range(3)]
+    assert pack(boxes, order="bands") == pack(boxes, order="size")
 
 
 def test_pack_fewest_slides_never_worse_than_any_single_mode():

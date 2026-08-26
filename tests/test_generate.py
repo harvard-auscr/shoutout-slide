@@ -58,6 +58,17 @@ def test_every_corpus_week_fits_one_slide_with_auto_font_size(tmp_path):
     assert sum(1 for s in sizes.values() if s == 12.0) >= 20
 
 
+@pytest.mark.parametrize("gm", [3, 22])  # busiest (bands fallback) and typical (shuffled path)
+def test_no_week_stacks_its_tallest_boxes_monotonically_on_top(gm, tmp_path):
+    """v1.0.0 placed largest-first, so every deck read tallest-rows-at-the-top;
+    the owner spotted the sort order straight off the slide. The auto layout
+    must never show that monotone height gradient again (v1.0.1)."""
+    result = generate(_week(gm), tmp_path / "g.pptx")
+    heights_top_down = [p.height_emu for p in sorted(result.placed, key=lambda p: (p.y_emu, p.x_emu))]
+    assert len(set(heights_top_down)) > 1  # the guard below is vacuous on uniform weeks
+    assert not all(a >= b for a, b in zip(heights_top_down, heights_top_down[1:]))
+
+
 def test_fixed_font_size_is_honoured_even_if_it_overflows(tmp_path):
     result = generate(_week(2), tmp_path / "f.pptx", font_size_pt=12)
     assert result.font_size_pt == 12 and result.slide_count == 2
