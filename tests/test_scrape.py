@@ -22,6 +22,12 @@ ROOT = Path(__file__).resolve().parents[1]
 DATASET = ROOT / "dataset"
 P_NS = {"p": "http://schemas.openxmlformats.org/presentationml/2006/main"}
 
+# The decks are private and not in git, but dataset/.gitkeep IS -- so the guard
+# must check for actual decks, not for the directory (which exists everywhere).
+requires_dataset = pytest.mark.skipif(
+    not any(DATASET.glob("General Meeting #*.pptx")), reason="private GM decks not present in dataset/"
+)
+
 
 # --------------------------------------------------------------------------- #
 # Naming
@@ -62,13 +68,14 @@ EXPECTED_SLIDES = {
 }
 
 
-@pytest.mark.skipif(not DATASET.exists(), reason="dataset/ not present")
+@requires_dataset
 @pytest.mark.parametrize("deck", _decks(), ids=lambda p: p.name)
 def test_find_shoutout_slides_matches_hand_verified_map(deck):
     num = int(re.search(r"#(\d+)", deck.name)[1])
     assert ss.find_shoutout_slide_numbers(Presentation(str(deck))) == EXPECTED_SLIDES[num]
 
 
+@requires_dataset
 def test_header_match_is_exact_not_substring():
     """GM #11 has a to-do slide saying 'Shoutouts for each week's GM!' -- must not match."""
     prs = Presentation(str(DATASET / "General Meeting #11 12.3.pptx"))
@@ -84,7 +91,7 @@ def scraped(tmp_path_factory):
     return ss.scrape_dataset(DATASET, out)
 
 
-@pytest.mark.skipif(not DATASET.exists(), reason="dataset/ not present")
+@requires_dataset
 def test_scrape_dataset_writes_one_file_per_deck_with_block(scraped):
     assert len(scraped) == 24
     skipped = [r for r in scraped if r.output is None]
@@ -95,7 +102,7 @@ def test_scrape_dataset_writes_one_file_per_deck_with_block(scraped):
             assert re.fullmatch(r"GM #\d+ \S+---shoutouts\.pptx", r.output.name)
 
 
-@pytest.mark.skipif(not DATASET.exists(), reason="dataset/ not present")
+@requires_dataset
 def test_scraped_slides_preserve_text_layout_and_animation_targets(scraped):
     for r in scraped:
         if r.output is None:
