@@ -43,6 +43,7 @@ the headers (`Timestamp`, `Shout-out`, …). If detection guesses wrong:
 | `--out` | `output` | output folder |
 | `--no-upload` | off | skip the Google Drive upload this run even if `.env` enables it |
 | `--env-file` | `.env` in the repo | where the upload settings live |
+| `--template` | `template/shoutouts_template.pptx` | the club-theme template every deck is built from |
 
 Optional, Windows + PowerPoint only — open the deck in real PowerPoint, check the
 *rendered* text bounds pairwise, count the animations, export PNGs:
@@ -56,7 +57,13 @@ python verify_render.py "output/GM #25 9.10---shoutouts.pptx" --png-dir renders
 The GM decks live in Google Slides, so the generator can drop each new deck
 straight into a Drive folder, already converted to a Google Slides file — after
 that it's **File → Import slides** in the GM deck. Nothing is uploaded unless
-you opt in:
+you opt in.
+
+Before you do: the consent screen asks for **full Google Drive access** (the
+`drive` scope), because the narrower `drive.file` scope cannot see a folder you
+picked by pasting its link. The cached token in `.google/` carries that access,
+so keep it on the machine that runs the generator and delete it when you stop
+using the upload.
 
 1. In the [Google Cloud console](https://console.cloud.google.com/) create a
    project, enable the **Google Drive API**, set up the OAuth consent screen
