@@ -7,7 +7,8 @@ Every shout-out becomes its own textbox (Roboto), packed so no two boxes
 touch, and each one appears on its own click in timestamp order. The font size
 starts at 12pt and steps down to 11 then 10 until everything fits on one slide;
 pass ``--font-size N`` to pin it (a very busy week then spills to a second
-slide, which the summary reports).
+slide, which the summary reports). If a ``.env`` names a Google Drive folder
+(see ``.env.example``) the deck is also uploaded there as a Google Slides file.
 """
 from __future__ import annotations
 
@@ -15,9 +16,14 @@ import argparse
 import sys
 from pathlib import Path
 
+from shoutout_gen import drive
 from shoutout_gen.deck import TEMPLATE_PATH
 from shoutout_gen.generate import AUTO_FONT_SIZES_PT, LAYOUT_MODES, generate, output_name_for
 from shoutout_gen.sheet import SheetFormatError, read_shoutouts
+
+# The optional Drive upload reads its settings from the repo's .env regardless of
+# the directory the command is run from.
+DEFAULT_ENV_FILE = Path(__file__).resolve().parent / ".env"
 
 
 def _font_size(value: str) -> float | None:
@@ -45,7 +51,17 @@ def _main(argv: list[str] | None = None) -> int:
     parser.add_argument("--text-column", help="force the shout-out column (header name)")
     parser.add_argument("--time-column", help="force the timestamp column (header name)")
     parser.add_argument("--template", type=Path, default=TEMPLATE_PATH)
+    parser.add_argument("--env-file", type=Path, default=DEFAULT_ENV_FILE, help="Drive upload settings (see .env.example)")
+    parser.add_argument("--no-upload", action="store_true", help="skip the Drive upload even if .env enables it")
     args = parser.parse_args(argv)
+
+    # Read the upload settings before doing any work, so a typo in .env fails fast
+    # instead of surfacing after the deck has already been generated.
+    try:
+        upload_cfg = None if args.no_upload else drive.load_config(args.env_file)
+    except drive.DriveConfigError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
     try:
         shoutouts = read_shoutouts(args.sheet, args.text_column, args.time_column)
@@ -72,6 +88,17 @@ def _main(argv: list[str] | None = None) -> int:
     if result.slide_count > 1:
         hint = "try a smaller --font-size" if args.font_size is not None else f"even at {result.font_size_pt:g}pt"
         print(f"note: did not fit on one slide ({hint}); the overflow is on the extra slide(s)")
+
+    if upload_cfg is not None:
+        try:
+            uploaded = drive.upload_deck(result.output, upload_cfg)
+        except Exception as exc:  # sign-in, network or Drive errors: the deck is safe on disk, so report and let the caller retry
+            print(
+                f'upload failed: {exc}\nthe deck is saved locally; retry with: python upload_to_slides.py "{result.output}"',
+                file=sys.stderr,
+            )
+            return 3
+        print(f"uploaded to Google Drive as Google Slides: {uploaded.link}")
     return 0
 
 

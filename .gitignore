@@ -23,3 +23,7 @@ venv/
 # Office lock files
 ~$*
 renders/
+
+# Google Drive upload settings and cached sign-in (see .env.example).
+.env
+.google/

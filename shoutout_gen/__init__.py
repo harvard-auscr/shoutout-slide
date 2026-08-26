@@ -5,4 +5,5 @@ Modules (interface -> implementation, no cycles):
     metrics  measure/wrap text in Roboto exactly as the slide will render it
     layout   pack measured boxes onto slides with zero overlap
     deck     write the PPTX (textboxes + per-box click animation)
+    drive    optional upload of the finished deck to Google Drive as Google Slides
 """

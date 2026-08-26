@@ -28,7 +28,8 @@ python generate_shoutouts.py samples/example_form.csv --gm 1 --date 9.17   # smo
    CSV** or `.xlsx`) and save it in `input/` (git-ignored).
 2. Run `python generate_shoutouts.py input/<file> --gm <n> --date <m.d>`.
 3. Open `output/GM #<n> <m.d>---shoutouts.pptx`, check it, paste the slide into
-   the GM deck.
+   the GM deck — or let the optional [Drive upload](#google-drive-upload-optional)
+   put a Google Slides copy in a shared folder for **File → Import slides**.
 
 The sheet needs a timestamp column and a message column; they are detected from
 the headers (`Timestamp`, `Shout-out`, …). If detection guesses wrong:
@@ -40,6 +41,8 @@ the headers (`Timestamp`, `Shout-out`, …). If detection guesses wrong:
 | `--layout` | `auto` | `compact` (rows with jitter) if it fits one slide, else `dense` |
 | `--seed` | `0` | different number = different arrangement |
 | `--out` | `output` | output folder |
+| `--no-upload` | off | skip the Google Drive upload this run even if `.env` enables it |
+| `--env-file` | `.env` in the repo | where the upload settings live |
 
 Optional, Windows + PowerPoint only — open the deck in real PowerPoint, check the
 *rendered* text bounds pairwise, count the animations, export PNGs:
@@ -47,6 +50,28 @@ Optional, Windows + PowerPoint only — open the deck in real PowerPoint, check 
 ```
 python verify_render.py "output/GM #25 9.10---shoutouts.pptx" --png-dir renders
 ```
+
+## Google Drive upload (optional)
+
+The GM decks live in Google Slides, so the generator can drop each new deck
+straight into a Drive folder, already converted to a Google Slides file — after
+that it's **File → Import slides** in the GM deck. Nothing is uploaded unless
+you opt in:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/) create a
+   project, enable the **Google Drive API**, set up the OAuth consent screen
+   (External; add yourself as a test user) and create an **OAuth client ID** of
+   type *Desktop app*.
+2. Copy `.env.example` to `.env` (git-ignored) and fill in `DRIVE_FOLDER` (paste
+   the folder link) plus either `DRIVE_CLIENT_ID` + `DRIVE_CLIENT_SECRET` or
+   `DRIVE_CLIENT_FILE` pointing at the downloaded client JSON.
+3. Run the generator as usual. The first upload opens a browser for consent
+   once; the sign-in is cached in `.google/` (git-ignored) after that.
+
+`DRIVE_UPLOAD=off` in `.env` (or `--no-upload`) skips the upload without
+touching the rest of the config; the same names as real environment variables
+override the file. If an upload fails the deck is still in `output/` — retry
+with `python upload_to_slides.py "output/GM #25 9.10---shoutouts.pptx"`.
 
 ## Data: what goes where
 
@@ -58,6 +83,7 @@ python verify_render.py "output/GM #25 9.10---shoutouts.pptx" --png-dir renders
 | `samples/` | `example_form.csv` (synthetic, safe to publish); CSVs built from real shout-outs stay local | example only |
 | `template/` | `shoutouts_template.pptx` — the club theme with a single `ONE_COLUMN_TEXT` layout | yes |
 | `fonts/` | `Roboto-Regular.ttf` (Apache 2.0, see `fonts/LICENSE.txt`) used to measure text | yes |
+| `.env`, `.google/` | Drive upload settings and cached sign-in (template: `.env.example`) | example only |
 
 Everything derived from members' submissions is ignored by default because it
 contains names, photos and in-jokes. If this repo is private and you want the
@@ -79,6 +105,7 @@ python make_template.py        # output/scraped/<deck> -> template/shoutouts_tem
 | measure | `shoutout_gen/metrics.py` | wrap each message in Roboto exactly as the slide will, with a 10% width slack calibrated on 531 real boxes so the renderer never wraps earlier than predicted |
 | pack | `shoutout_gen/layout.py` | place boxes on a 0.05in raster using prefix-sum feasibility, then stretch the layout to span the slide (scaling positions up can never create an overlap) |
 | write | `shoutout_gen/deck.py` | textboxes + one click-Appear animation per box, from the template |
+| upload | `shoutout_gen/drive.py` | optional: push the deck to a Drive folder as Google Slides (off unless `.env` says so) |
 
 Why we trust "no overlaps": boxes are placed only on cells proven free (and
 re-checked pairwise before saving); the text model never under-predicts line

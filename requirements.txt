@@ -10,3 +10,7 @@ pytest>=8
 
 # Optional: real-PowerPoint verification (verify_render.py), Windows only
 pywin32>=306; sys_platform == "win32"
+
+# Optional: Google Drive upload (used only when .env sets DRIVE_FOLDER)
+google-api-python-client>=2.100
+google-auth-oauthlib>=1.2
