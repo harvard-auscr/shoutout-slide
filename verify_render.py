@@ -6,10 +6,11 @@ Why: python-pptx can only prove the *boxes* we wrote don't overlap. Whether the
 that each shape's animation exists and that nothing leaves the slide. It also
 exports a PNG per slide for eyeballing.
 
-Caveat: this machine has no Roboto installed, so PowerPoint substitutes a
-different font here; Google Slides (where the deck is presented) has Roboto.
-A pass here is therefore a pass under a *different* font than the one the
-layout was measured for -- a useful robustness check, not the exact target.
+Caveat: PowerPoint renders Roboto here through Office's cloud fonts and the
+template's embedded copy; on a machine with neither it substitutes another
+font, and a pass is then a pass under a *different* font than the layout was
+measured for -- still a useful robustness check, but not the exact target.
+Google Slides (where the deck is presented) has Roboto natively.
 
 Usage:
     python verify_render.py "output/GM #25 9.10---shoutouts.pptx" [--png-dir folder]
@@ -67,6 +68,9 @@ def verify(pptx_path: Path, png_dir: Path | None = None) -> list[str]:
                 f"text overlaps={len(text_hits)}, box overlaps={len(box_hits)}"
             )
             if png_dir is not None:
+                # PowerPoint resolves relative paths against ITS working directory,
+                # not ours, so a relative --png-dir must be made absolute first.
+                png_dir = png_dir.resolve()
                 png_dir.mkdir(parents=True, exist_ok=True)
                 slide.Export(str(png_dir / f"{pptx_path.stem}_s{s}.png"), "PNG", 1920, 1080)
     finally:
