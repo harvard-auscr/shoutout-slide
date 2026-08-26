@@ -1,0 +1,23 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -r requirements.txt
+      # Tests that need the private dataset/corpus skip themselves when it is absent;
+      # layout, measurement, sheet-reading and deck-writing tests all run here.
+      - run: python -m pytest tests -q
+      # Smoke-test the documented quickstart end to end.
+      - run: python generate_shoutouts.py samples/example_form.csv --gm 1 --date 9.17 --out /tmp/out

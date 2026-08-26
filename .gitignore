@@ -1,0 +1,25 @@
+# --- Private club data: never committed by default ---------------------------
+# Historical GM decks (members' names, photos) -- drop them in dataset/ locally.
+dataset/*
+!dataset/.gitkeep
+# Weekly form exports.
+input/*
+!input/.gitkeep
+# Everything derived from the above (scraped slides, corpus, generated decks).
+output/
+# Sample form CSVs built from real shout-outs; only the synthetic example ships.
+samples/*
+!samples/example_form.csv
+
+# Internal planning notes.
+tasks/
+
+# --- Tooling -------------------------------------------------------------------
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+# Office lock files
+~$*
+renders/
