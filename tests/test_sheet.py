@@ -37,6 +37,21 @@ def test_google_form_csv_sorted_by_timestamp(tmp_path):
     assert out[0].row == 3
 
 
+def test_forms_download_with_email_column_and_question_header(tmp_path):
+    """The exact shape of a Forms responses download accepted in wet test C1:
+    Timestamp, the collected email, then the question text as the header --
+    the email column must never be mistaken for the message."""
+    p = _csv(
+        tmp_path,
+        'Timestamp,Email Address,"Shout-out! Who deserves some love this week, and why?"',
+        "9/3/2026 0:35:17,member08@example.edu,thanks for the snacks",
+        "9/3/2026 9:06:42,member02@example.edu,the tailgate playlist!!",
+    )
+    out = read_shoutouts(p)
+    assert [s.text for s in out] == ["thanks for the snacks", "the tailgate playlist!!"]
+    assert out[0].timestamp == datetime(2026, 9, 3, 0, 35, 17)
+
+
 def test_untimestamped_rows_go_last_in_sheet_order(tmp_path):
     p = _csv(tmp_path, "Timestamp,Message", "not a date,z", "2025-01-02 10:00,b", ",y", "2025-01-01 10:00,a")
     assert [s.text for s in read_shoutouts(p)] == ["a", "b", "z", "y"]

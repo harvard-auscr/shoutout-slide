@@ -84,8 +84,10 @@ def test_cli_end_to_end(tmp_path):
         w.writerow(["Timestamp", "Shout-out!"])
         for i, text in enumerate(_week(22)):
             w.writerow([f"9/10/2025 19:{i:02d}:00", text])
+    # --no-upload: the developer's real .env must never turn a test run into a Drive upload.
     proc = subprocess.run(
-        [sys.executable, str(ROOT / "generate_shoutouts.py"), str(sheet), "--gm", "25", "--date", "9.10", "--out", str(tmp_path)],
+        [sys.executable, str(ROOT / "generate_shoutouts.py"), str(sheet), "--gm", "25", "--date", "9.10",
+         "--out", str(tmp_path), "--no-upload"],
         capture_output=True, text=True, cwd=ROOT,
     )
     assert proc.returncode == 0, proc.stderr
