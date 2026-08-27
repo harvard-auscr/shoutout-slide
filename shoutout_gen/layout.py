@@ -7,16 +7,15 @@ property-tested exhaustively (see tests/test_layout.py).
 Algorithm -- greedy fill on a raster, then spread:
   * The slide is a grid of small cells (0.05in). Placed boxes, inflated by the
     inter-box gap, mark cells occupied; the outer margin is pre-occupied.
-  * Placement order is independent of click order. ``order="size"`` places
-    largest-first (tall multi-line boxes are the hardest to fit, so this is
-    the maximum-capacity order); ``order="shuffle"`` places in a seeded random
-    order, because size order is readable straight off the finished slide --
-    every long shout-out clustered in the top rows. ``order="bands"`` packs in
-    size order but then permutes the resulting row bands vertically: near-full
-    weeks need size order's height-homogeneous rows to fit at all (a shuffled
-    order mixes tall and short boxes into the same band and wastes the space
-    above the short ones), and reordering whole bands keeps that capacity
-    while destroying the tall-rows-first gradient.
+  * Boxes are placed largest-first (tall multi-line boxes are the hardest to
+    fit, and placement order is independent of click order). That order is
+    readable straight off the finished slide -- every long shout-out in the
+    top rows -- so ``order="bands"`` re-deals the finished row bands into the
+    least height-graded of several random vertical orders. Whole rows move,
+    never single boxes: near-full weeks need size order's height-homogeneous
+    rows to fit at all, and a randomised placement order does not remove the
+    gradient anyway, it inverts it (short boxes backfill the upper gaps while
+    tall latecomers sink).
   * For each box, every grid position where it fits is found in one shot with a
     2-D prefix sum over the occupancy grid. "compact" mode picks randomly among
     the fitting spots in the topmost row band (the corpus' rows-with-jitter
@@ -47,8 +46,8 @@ DEFAULT_MARGIN_EMU = 91_440  # 0.10in keep-out at the slide edge
 MAX_SPREAD = 3.0  # a two-shout-out week is spread, but not flung to opposite corners
 
 MODES = ("compact", "dense")  # prettiest -> highest capacity
-ORDERS = ("size", "shuffle", "bands")  # highest capacity -> most mixed -> both
-SHUFFLE_ATTEMPTS = 8  # seeded reorderings tried before conceding to size order
+ORDERS = ("size", "bands")  # same capacity; "bands" randomises the row order
+BAND_DRAWS = 8  # row orders drawn per slide; the least height-graded one is kept
 
 
 @dataclass(frozen=True)
@@ -84,17 +83,11 @@ def pack_fewest_slides(boxes: list[Box], seed: int = 0, **kwargs) -> list[Placem
     some space; when a busy week would spill onto an extra slide, the dense
     layout that keeps everything on one slide beats a pretty one that doesn't.
 
-    Prettiest also means no visible size gradient: size-ordered compact
-    packing reads as "long ones at the top" on the finished slide. Several
-    fully shuffled attempts are tried first (the most organic mix); weeks too
-    full for any shuffle fall back to size-ordered packing with its row bands
-    permuted ("bands"), which fits exactly what v1.0.0 fit while still hiding
-    the gradient.
+    Prettiest also means no visible size gradient, so both modes are packed
+    with ``order="bands"``: capacity is exactly that of size order, and the
+    rows come out in the least height-graded random order instead of
+    tallest-first.
     """
-    for attempt in range(SHUFFLE_ATTEMPTS):
-        candidate = pack(boxes, seed=seed + attempt, mode="compact", order="shuffle", **kwargs)
-        if _slide_count(candidate) <= 1:
-            return candidate
     best: list[Placement] | None = None
     for mode in MODES:
         candidate = pack(boxes, seed=seed, mode=mode, order="bands", **kwargs)
@@ -130,10 +123,8 @@ def pack(
     margin_cells = _ceil_div(margin_emu, CELL_EMU)
     rng = np.random.default_rng(seed)
 
-    if order == "shuffle":
-        placement_order = [boxes[i] for i in rng.permutation(len(boxes))]
-    else:  # "size" and "bands" both pack largest-first; "bands" reorders rows afterwards
-        placement_order = sorted(boxes, key=lambda b: (b.height_emu, b.width_emu), reverse=True)
+    # Both orders pack largest-first; "bands" re-deals the finished rows afterwards.
+    placement_order = sorted(boxes, key=lambda b: (b.height_emu, b.width_emu), reverse=True)
     slides: list[_SlideGrid] = []
     placed: dict[int, Placement] = {}
     for box in placement_order:
@@ -172,6 +163,22 @@ def overlapping_pairs(rects: list[tuple[int, int, int, int]]) -> list[tuple[int,
             if ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah:
                 hits.append((i, j))
     return hits
+
+
+def height_gradient(boxes: list[tuple[int, int]]) -> float:
+    """Pearson correlation between a box's top edge and its height, over (y, height) pairs.
+
+    This is the number behind "the long ones are all at the top": size-ordered
+    layouts of busy weeks score about -0.8 (taller boxes have smaller y);
+    0 means height says nothing about vertical position. Returns 0.0 when
+    either value is constant (one box, a single row, uniform heights).
+    """
+    if len(boxes) < 2:
+        return 0.0
+    ys, hs = np.array(boxes, dtype=float).T
+    if ys.std() == 0 or hs.std() == 0:
+        return 0.0
+    return float(np.corrcoef(ys, hs)[0, 1])
 
 
 # --------------------------------------------------------------------------- #
@@ -222,7 +229,8 @@ def _shuffle_bands(
     gap_emu: int,
     max_bottom_emu: int,
 ) -> list[Placement]:
-    """Permute each slide's row bands vertically; x positions never move.
+    """Re-deal each slide's row bands into the least height-graded of BAND_DRAWS
+    random vertical orders; x positions never move.
 
     A band is a maximal group of boxes whose y-intervals overlap transitively,
     so distinct bands are disjoint horizontal strips. Restacked bands are
@@ -232,6 +240,10 @@ def _shuffle_bands(
     (possible only when the original layout interleaved x-disjoint bands more
     tightly than the gap), that slide keeps its original order -- correctness
     over looks.
+
+    Several orders are drawn because a single random permutation of ~10 rows
+    often still leans one way by chance; keeping the draw with the smallest
+    |height_gradient| is what makes the result read as pattern-free.
     """
     out: list[Placement] = []
     for slide in sorted({p.slide for p in placements}):
@@ -248,11 +260,24 @@ def _shuffle_bands(
         if restacked_bottom > max_bottom_emu:
             out.extend(group)
             continue
-        y = bands[0][0]  # keep the original top offset; _spread stretches the rest
-        for idx in rng.permutation(len(bands)):
-            top, bottom, members = bands[idx]
-            out.extend(Placement(p.key, slide, p.x_emu, y + (p.y_emu - top)) for p in members)
-            y += (bottom - top) + gap_emu
+        best: tuple[float, list[Placement]] | None = None
+        for _ in range(BAND_DRAWS):
+            candidate = _restack(bands, rng.permutation(len(bands)), gap_emu)
+            score = abs(height_gradient([(p.y_emu, sizes[p.key].height_emu) for p in candidate]))
+            if best is None or score < best[0]:
+                best = (score, candidate)
+        out.extend(best[1])
+    return out
+
+
+def _restack(bands: list[tuple[int, int, list[Placement]]], order: np.ndarray, gap_emu: int) -> list[Placement]:
+    """Stack ``bands`` top-down in ``order``, keeping each band's internal offsets."""
+    out: list[Placement] = []
+    y = bands[0][0]  # keep the original top offset; _spread stretches the rest
+    for idx in order:
+        top, bottom, members = bands[idx]
+        out.extend(Placement(p.key, p.slide, p.x_emu, y + (p.y_emu - top)) for p in members)
+        y += (bottom - top) + gap_emu
     return out
 
 

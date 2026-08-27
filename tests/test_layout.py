@@ -17,6 +17,7 @@ from shoutout_gen.layout import (  # noqa: E402
     SLIDE_WIDTH_EMU,
     Box,
     BoxTooLargeError,
+    height_gradient,
     overlapping_pairs,
     pack,
     pack_fewest_slides,
@@ -104,38 +105,24 @@ def test_dense_never_needs_more_slides_than_compact():
         assert dense <= compact
 
 
-def test_pack_fewest_slides_prefers_shuffled_compact_when_it_fits():
-    # First shuffle attempt = compact/shuffle at the same seed; six small boxes always fit.
+def test_pack_fewest_slides_prefers_compact_bands_when_it_fits():
     boxes = _random_boxes(6, 1)
-    assert pack_fewest_slides(boxes) == pack(boxes, mode="compact", order="shuffle")
+    assert pack_fewest_slides(boxes) == pack(boxes, mode="compact", order="bands")
 
 
-@pytest.mark.parametrize("seed", range(3))
-def test_shuffled_order_keeps_all_invariants(seed):
-    boxes = _random_boxes(40, seed)
-    _check_invariants(boxes, pack(boxes, mode="compact", order="shuffle", seed=seed))
+def test_height_gradient_sign_and_degenerate_cases():
+    # Tall boxes at the top (small y) -> negative; that is the v1.0.0 look (about -0.8).
+    assert height_gradient([(0, 3), (10, 2), (20, 1)]) == pytest.approx(-1.0)
+    assert height_gradient([(0, 1), (10, 2), (20, 3)]) == pytest.approx(1.0)
+    assert height_gradient([(0, 1), (10, 1), (20, 1)]) == 0.0  # uniform heights
+    assert height_gradient([(5, 2), (5, 1)]) == 0.0  # a single row
+    assert height_gradient([(5, 2)]) == 0.0 and height_gradient([]) == 0.0
 
 
-def test_shuffle_is_deterministic_and_actually_reorders():
+def test_band_order_is_deterministic_and_seed_sensitive():
     boxes = _random_boxes(25, 7)
-    assert pack(boxes, order="shuffle", seed=3) == pack(boxes, order="shuffle", seed=3)
-    assert pack(boxes, order="shuffle", seed=3) != pack(boxes, order="shuffle", seed=4)
-    assert pack(boxes, order="shuffle", seed=3) != pack(boxes, order="size", seed=3)
-
-
-def test_auto_layout_breaks_the_tallest_at_the_top_pattern():
-    """v1.0.0 placed largest-first, so every deck showed its long shout-outs
-    clustered in the top rows; the auto ladder must not read that way."""
-    tall, short = 561_000, 187_000
-    boxes = [Box(i, 1_500_000, tall if i < 8 else short) for i in range(16)]
-    placements = pack_fewest_slides(boxes)
-    _check_invariants(boxes, placements)
-    assert max(p.slide for p in placements) == 0
-    heights_top_down = [
-        b.height_emu for _, b in sorted(zip(placements, boxes), key=lambda t: (t[0].y_emu, t[0].x_emu))
-    ]
-    first_short = heights_top_down.index(short)
-    assert tall in heights_top_down[first_short + 1 :]  # some tall box sits below a short one
+    assert pack(boxes, order="bands", seed=3) == pack(boxes, order="bands", seed=3)
+    assert pack(boxes, order="bands", seed=3) != pack(boxes, order="bands", seed=4)
 
 
 def test_unknown_order_raises():
@@ -161,18 +148,19 @@ def test_band_order_never_costs_a_slide(n):
             assert band_slides == size_slides
 
 
-def test_band_order_breaks_the_row_height_gradient():
+def test_band_order_flattens_the_row_height_gradient():
     # Six tall + six short boxes, three to a row: size order stacks the two tall
-    # rows above the two short rows; band order must not keep that gradient.
+    # rows above the two short rows (gradient near -1); band order must flatten it.
     tall, short = 561_000, 187_000
     boxes = [Box(i, 2_700_000, tall if i < 6 else short) for i in range(12)]
-    placements = pack(boxes, mode="compact", order="bands")
-    _check_invariants(boxes, placements)
-    heights_top_down = [
-        b.height_emu for _, b in sorted(zip(placements, boxes), key=lambda t: (t[0].y_emu, t[0].x_emu))
-    ]
-    first_short = heights_top_down.index(short)
-    assert tall in heights_top_down[first_short + 1 :]
+
+    def grade(placements):
+        return height_gradient([(p.y_emu, b.height_emu) for p, b in zip(placements, boxes)])
+
+    assert grade(pack(boxes, mode="compact", order="size")) < -0.8
+    banded = pack(boxes, mode="compact", order="bands")
+    _check_invariants(boxes, banded)
+    assert abs(grade(banded)) < 0.3
 
 
 def test_band_order_with_a_single_row_matches_size_order():

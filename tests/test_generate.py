@@ -12,7 +12,7 @@ from pptx import Presentation
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shoutout_gen.deck import TEMPLATE_PATH  # noqa: E402
 from shoutout_gen.generate import generate, output_name_for  # noqa: E402
-from shoutout_gen.layout import overlapping_pairs  # noqa: E402
+from shoutout_gen.layout import height_gradient, overlapping_pairs  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "output" / "shoutouts_corpus.csv"
@@ -58,15 +58,26 @@ def test_every_corpus_week_fits_one_slide_with_auto_font_size(tmp_path):
     assert sum(1 for s in sizes.values() if s == 12.0) >= 20
 
 
-@pytest.mark.parametrize("gm", [3, 22])  # busiest (bands fallback) and typical (shuffled path)
-def test_no_week_stacks_its_tallest_boxes_monotonically_on_top(gm, tmp_path):
-    """v1.0.0 placed largest-first, so every deck read tallest-rows-at-the-top;
-    the owner spotted the sort order straight off the slide. The auto layout
-    must never show that monotone height gradient again (v1.0.1)."""
-    result = generate(_week(gm), tmp_path / "g.pptx")
-    heights_top_down = [p.height_emu for p in sorted(result.placed, key=lambda p: (p.y_emu, p.x_emu))]
-    assert len(set(heights_top_down)) > 1  # the guard below is vacuous on uniform weeks
-    assert not all(a >= b for a, b in zip(heights_top_down, heights_top_down[1:]))
+def test_no_busy_week_shows_a_height_gradient(tmp_path):
+    """v1.0.0 placed largest-first, so busy weeks read tallest-rows-at-the-top
+    (height_gradient -0.80 to -0.87 on GM 2/3/4/9/11/17 -- the owner spotted
+    the sort order straight off the slide). Every week of 15+ shout-outs must
+    lay out within +-0.35: the shipped layout's observed maximum is 0.13, and
+    the rejected alternative -- a shuffled placement order -- scores +0.4..+0.6
+    because it inverts the gradient instead of removing it. Weeks under 15 are
+    skipped: with a handful of rows no order can balance the halves, and no
+    pattern shows either."""
+    with CORPUS.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    graded = {}
+    for gm in sorted({int(r["gm_number"]) for r in rows}):
+        texts = [r["text"] for r in rows if int(r["gm_number"]) == gm]
+        if len(texts) < 15:
+            continue
+        result = generate(texts, tmp_path / f"{gm}.pptx")
+        graded[gm] = round(height_gradient([(p.y_emu, p.height_emu) for p in result.placed]), 3)
+    assert len(graded) >= 20
+    assert all(abs(g) <= 0.35 for g in graded.values()), graded
 
 
 def test_fixed_font_size_is_honoured_even_if_it_overflows(tmp_path):
