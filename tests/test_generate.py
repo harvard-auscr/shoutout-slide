@@ -11,7 +11,7 @@ from pptx import Presentation
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shoutout_gen.deck import TEMPLATE_PATH  # noqa: E402
-from shoutout_gen.generate import generate, output_name_for  # noqa: E402
+from shoutout_gen.generate import BOX_WIDTH_RANGE_EMU, generate, output_name_for  # noqa: E402
 from shoutout_gen.layout import height_gradient, overlapping_pairs  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +78,22 @@ def test_no_busy_week_shows_a_height_gradient(tmp_path):
         graded[gm] = round(height_gradient([(p.y_emu, p.height_emu) for p in result.placed]), 3)
     assert len(graded) >= 20
     assert all(abs(g) <= 0.35 for g in graded.values()), graded
+
+
+def test_box_widths_vary_and_are_reproducible(tmp_path):
+    """Wet test C2: equal wrap widths (every original box was 3.0M EMU wide)
+    read as strict columns once the rows are re-dealt, so each shout-out gets
+    its own seeded wrap width. Only wrapped boxes show it -- a one-liner is as
+    wide as its text -- and the same seed must give byte-for-byte the same layout."""
+    a = generate(_week(3), tmp_path / "a.pptx")
+    b = generate(_week(3), tmp_path / "b.pptx")
+    geometry = lambda r: [(p.x_emu, p.y_emu, p.width_emu, p.height_emu) for p in r.placed]  # noqa: E731
+    assert geometry(a) == geometry(b)
+    one_line = min(p.height_emu for p in a.placed)
+    wrapped = [p.width_emu for p in a.placed if p.height_emu > one_line]
+    assert len(wrapped) >= 10 and len(set(wrapped)) >= 8  # not one shared width
+    assert max(wrapped) <= BOX_WIDTH_RANGE_EMU[1]
+    assert min(wrapped) < 2_600_000 < 3_400_000 < max(wrapped)  # the range is actually used
 
 
 def test_fixed_font_size_is_honoured_even_if_it_overflows(tmp_path):

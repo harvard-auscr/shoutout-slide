@@ -13,6 +13,7 @@ from shoutout_gen.layout import (  # noqa: E402
     DEFAULT_MARGIN_EMU,
     MAX_SPREAD,
     MODES,
+    ROW_DRAWS,
     SLIDE_HEIGHT_EMU,
     SLIDE_WIDTH_EMU,
     Box,
@@ -105,9 +106,12 @@ def test_dense_never_needs_more_slides_than_compact():
         assert dense <= compact
 
 
-def test_pack_fewest_slides_prefers_compact_bands_when_it_fits():
+def test_pack_fewest_slides_returns_a_compact_candidate_when_it_fits():
     boxes = _random_boxes(6, 1)
-    assert pack_fewest_slides(boxes) == pack(boxes, mode="compact", order="bands")
+    candidates = [pack(boxes, mode="compact", order="size")] + [
+        pack(boxes, mode="compact", order="rows", seed=s) for s in range(1, ROW_DRAWS + 1)
+    ]
+    assert pack_fewest_slides(boxes) in candidates
 
 
 def test_height_gradient_sign_and_degenerate_cases():
@@ -119,10 +123,11 @@ def test_height_gradient_sign_and_degenerate_cases():
     assert height_gradient([(5, 2)]) == 0.0 and height_gradient([]) == 0.0
 
 
-def test_band_order_is_deterministic_and_seed_sensitive():
+def test_row_deal_is_deterministic_and_seed_sensitive():
     boxes = _random_boxes(25, 7)
-    assert pack(boxes, order="bands", seed=3) == pack(boxes, order="bands", seed=3)
-    assert pack(boxes, order="bands", seed=3) != pack(boxes, order="bands", seed=4)
+    assert pack(boxes, order="rows", seed=3) == pack(boxes, order="rows", seed=3)
+    assert pack(boxes, order="rows", seed=3) != pack(boxes, order="rows", seed=4)
+    assert pack_fewest_slides(boxes, seed=3) == pack_fewest_slides(boxes, seed=3)
 
 
 def test_unknown_order_raises():
@@ -132,41 +137,44 @@ def test_unknown_order_raises():
 
 @pytest.mark.parametrize("mode", MODES)
 @pytest.mark.parametrize("seed", range(3))
-def test_band_order_keeps_all_invariants(mode, seed):
+def test_row_deal_keeps_all_invariants(mode, seed):
     boxes = _random_boxes(40, seed)
-    _check_invariants(boxes, pack(boxes, mode=mode, order="bands", seed=seed))
+    _check_invariants(boxes, pack(boxes, mode=mode, order="rows", seed=seed))
 
 
 @pytest.mark.parametrize("n", [40, 70])  # one-slide and overflow sets
-def test_band_order_never_costs_a_slide(n):
-    # Band permutation must be capacity-neutral: it only reorders rows vertically.
+def test_pack_fewest_slides_never_needs_more_slides_than_size_order(n):
+    # Size order is always among the candidates, so the class deals can only add
+    # prettier one-slide options, never cost capacity.
     for seed in range(3):
         boxes = _random_boxes(n, seed)
-        for mode in MODES:
-            size_slides = max(p.slide for p in pack(boxes, mode=mode, order="size", seed=seed))
-            band_slides = max(p.slide for p in pack(boxes, mode=mode, order="bands", seed=seed))
-            assert band_slides == size_slides
+        size_slides = min(max(p.slide for p in pack(boxes, mode=m, order="size", seed=seed)) for m in MODES)
+        _check_invariants(boxes, pack_fewest_slides(boxes, seed=seed))
+        assert max(p.slide for p in pack_fewest_slides(boxes, seed=seed)) <= size_slides
 
 
-def test_band_order_flattens_the_row_height_gradient():
-    # Six tall + six short boxes, three to a row: size order stacks the two tall
-    # rows above the two short rows (gradient near -1); band order must flatten it.
-    tall, short = 561_000, 187_000
-    boxes = [Box(i, 2_700_000, tall if i < 6 else short) for i in range(12)]
+def test_auto_layout_flattens_the_row_height_gradient():
+    # Three height classes, three boxes to a row: size order stacks the rows tallest
+    # first (gradient near -1); the auto layout must pick a deal that flattens it.
+    heights = [561_000] * 6 + [374_000] * 6 + [187_000] * 6
+    boxes = [Box(i, 2_700_000, h) for i, h in enumerate(heights)]
 
     def grade(placements):
         return height_gradient([(p.y_emu, b.height_emu) for p, b in zip(placements, boxes)])
 
     assert grade(pack(boxes, mode="compact", order="size")) < -0.8
-    banded = pack(boxes, mode="compact", order="bands")
-    _check_invariants(boxes, banded)
-    assert abs(grade(banded)) < 0.3
+    auto = pack_fewest_slides(boxes)
+    _check_invariants(boxes, auto)
+    assert max(p.slide for p in auto) == 0
+    assert abs(grade(auto)) < 0.3
 
 
-def test_band_order_with_a_single_row_matches_size_order():
-    # One band has nothing to permute, so the layouts must be identical.
-    boxes = [Box(i, 1_000_000, 187_000) for i in range(3)]
-    assert pack(boxes, order="bands") == pack(boxes, order="size")
+def test_row_deal_with_a_single_row_has_nothing_to_deal():
+    # Three boxes that share one row form one chunk, so the deal cannot reorder them.
+    boxes = [Box(i, w, 187_000) for i, w in enumerate([500_000, 2_500_000, 1_500_000])]
+    dealt = pack(boxes, order="rows", mode="dense")
+    _check_invariants(boxes, dealt)
+    assert dealt == pack(boxes, order="size", mode="dense")
 
 
 def test_pack_fewest_slides_never_worse_than_any_single_mode():

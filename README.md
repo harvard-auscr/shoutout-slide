@@ -109,7 +109,7 @@ python make_template.py        # output/scraped/<deck> -> template/shoutouts_tem
 | step | module | what it does |
 |---|---|---|
 | read | `shoutout_gen/sheet.py` | load CSV/XLSX, detect columns, order by timestamp |
-| measure | `shoutout_gen/metrics.py` | wrap each message in Roboto exactly as the slide will, with a 10% width slack calibrated on 531 real boxes so the renderer never wraps earlier than predicted |
+| measure | `shoutout_gen/metrics.py` | wrap each message in Roboto exactly as the slide will, at its own seeded wrap width (2.4-4.2 in, so wrapped boxes do not line up into columns), with a 10% width slack calibrated on 531 real boxes so the renderer never wraps earlier than predicted |
 | pack | `shoutout_gen/layout.py` | place boxes on a 0.05in raster using prefix-sum feasibility, then stretch the layout to span the slide (scaling positions up can never create an overlap) |
 | write | `shoutout_gen/deck.py` | textboxes + one click-Appear animation per box, from the template |
 | upload | `shoutout_gen/drive.py` | optional: push the deck to a Drive folder as Google Slides (off unless `.env` says so) |

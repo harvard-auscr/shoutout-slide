@@ -7,15 +7,21 @@ property-tested exhaustively (see tests/test_layout.py).
 Algorithm -- greedy fill on a raster, then spread:
   * The slide is a grid of small cells (0.05in). Placed boxes, inflated by the
     inter-box gap, mark cells occupied; the outer margin is pre-occupied.
-  * Boxes are placed largest-first (tall multi-line boxes are the hardest to
-    fit, and placement order is independent of click order). That order is
-    readable straight off the finished slide -- every long shout-out in the
-    top rows -- so ``order="bands"`` re-deals the finished row bands into the
-    least height-graded of several random vertical orders. Whole rows move,
-    never single boxes: near-full weeks need size order's height-homogeneous
-    rows to fit at all, and a randomised placement order does not remove the
-    gradient anyway, it inverts it (short boxes backfill the upper gaps while
-    tall latecomers sink).
+  * Placement order is independent of click order. ``order="size"`` places
+    largest-first (tall multi-line boxes are the hardest to fit, so this is
+    the maximum-capacity order) -- but that order is readable straight off
+    the finished slide, every long shout-out in the top rows.
+    ``order="rows"`` cuts that same size-ordered sequence into row-sized
+    chunks (by width) and deals the chunks in a seeded random order: rows stay
+    height-homogeneous, which is what lets near-full weeks fit, but which rows
+    land on top is random. pack_fewest_slides packs several such deals plus
+    size order and keeps the least height-graded one that fits. Rejected on
+    the way here: a fully randomised placement order (it does not remove the
+    gradient, it inverts it -- short boxes backfill the upper gaps while tall
+    latecomers sink); re-dealing the finished rows afterwards (once box widths
+    vary, small boxes nest into gaps inside taller rows and there are no rows
+    left to re-deal); and dealing whole height classes (too coarse -- the few
+    tall rows of a light week can only go top, middle or bottom as a block).
   * For each box, every grid position where it fits is found in one shot with a
     2-D prefix sum over the occupancy grid. "compact" mode picks randomly among
     the fitting spots in the topmost row band (the corpus' rows-with-jitter
@@ -46,8 +52,9 @@ DEFAULT_MARGIN_EMU = 91_440  # 0.10in keep-out at the slide edge
 MAX_SPREAD = 3.0  # a two-shout-out week is spread, but not flung to opposite corners
 
 MODES = ("compact", "dense")  # prettiest -> highest capacity
-ORDERS = ("size", "bands")  # same capacity; "bands" randomises the row order
-BAND_DRAWS = 8  # row orders drawn per slide; the least height-graded one is kept
+ORDERS = ("size", "rows")  # largest-first; row-sized chunks of it dealt in a random order
+ROW_DRAWS = 32  # row deals tried besides size order; the least height-graded fit wins. Busy weeks fit
+# few deals: 8 or 16 draws left GM 4 at -0.34, 32 puts every corpus week within +-0.05.
 
 
 @dataclass(frozen=True)
@@ -83,18 +90,24 @@ def pack_fewest_slides(boxes: list[Box], seed: int = 0, **kwargs) -> list[Placem
     some space; when a busy week would spill onto an extra slide, the dense
     layout that keeps everything on one slide beats a pretty one that doesn't.
 
-    Prettiest also means no visible size gradient, so both modes are packed
-    with ``order="bands"``: capacity is exactly that of size order, and the
-    rows come out in the least height-graded random order instead of
-    tallest-first.
+    Prettiest also means no visible size gradient: per mode, size order and
+    ROW_DRAWS random row deals are all packed, and the least height-graded of
+    those that fit on one slide wins. Size order is always among the
+    candidates, so capacity is never worse than largest-first.
     """
+    sizes = {b.key: b for b in boxes}
     best: list[Placement] | None = None
     for mode in MODES:
-        candidate = pack(boxes, seed=seed, mode=mode, order="bands", **kwargs)
-        if _slide_count(candidate) <= 1:
-            return candidate
-        if best is None or _slide_count(candidate) < _slide_count(best):
-            best = candidate
+        candidates = [pack(boxes, seed=seed, mode=mode, order="size", **kwargs)]
+        candidates += [
+            pack(boxes, seed=seed + draw, mode=mode, order="rows", **kwargs) for draw in range(1, ROW_DRAWS + 1)
+        ]
+        fitting = [c for c in candidates if _slide_count(c) <= 1]
+        if fitting:
+            return min(fitting, key=lambda c: abs(height_gradient([(p.y_emu, sizes[p.key].height_emu) for p in c])))
+        for candidate in candidates:
+            if best is None or _slide_count(candidate) < _slide_count(best):
+                best = candidate
     assert best is not None
     return best
 
@@ -123,8 +136,9 @@ def pack(
     margin_cells = _ceil_div(margin_emu, CELL_EMU)
     rng = np.random.default_rng(seed)
 
-    # Both orders pack largest-first; "bands" re-deals the finished rows afterwards.
     placement_order = sorted(boxes, key=lambda b: (b.height_emu, b.width_emu), reverse=True)
+    if order == "rows":
+        placement_order = _row_deal(placement_order, rng, slide_width_emu - 2 * margin_emu, gap_emu)
     slides: list[_SlideGrid] = []
     placed: dict[int, Placement] = {}
     for box in placement_order:
@@ -146,10 +160,7 @@ def pack(
         placed[box.key] = Placement(box.key, slide_idx, col * CELL_EMU, row * CELL_EMU)
 
     sizes = {b.key: b for b in boxes}
-    raw = list(placed.values())
-    if order == "bands":
-        raw = _shuffle_bands(raw, sizes, rng, gap_emu, slide_height_emu - margin_cells * CELL_EMU)
-    spread = _spread(raw, sizes, slide_width_emu, slide_height_emu, margin_cells * CELL_EMU)
+    spread = _spread(list(placed.values()), sizes, slide_width_emu, slide_height_emu, margin_cells * CELL_EMU)
     return [spread[b.key] for b in boxes]
 
 
@@ -222,63 +233,28 @@ class _SlideGrid:
         self.occ[r0:r1, c0:c1] = 1
 
 
-def _shuffle_bands(
-    placements: list[Placement],
-    sizes: dict[int, Box],
-    rng: np.random.Generator,
-    gap_emu: int,
-    max_bottom_emu: int,
-) -> list[Placement]:
-    """Re-deal each slide's row bands into the least height-graded of BAND_DRAWS
-    random vertical orders; x positions never move.
+def _row_deal(size_ordered: list[Box], rng: np.random.Generator, usable_width_emu: int, gap_emu: int) -> list[Box]:
+    """Cut a size-ordered sequence into row-sized chunks and deal the chunks in a random order.
 
-    A band is a maximal group of boxes whose y-intervals overlap transitively,
-    so distinct bands are disjoint horizontal strips. Restacked bands are
-    separated by exactly ``gap_emu``, which preserves the packer's clearance
-    guarantee: any box in a lower band starts at least ``gap_emu`` below every
-    box in the band above. If the restack would poke past ``max_bottom_emu``
-    (possible only when the original layout interleaved x-disjoint bands more
-    tightly than the gap), that slide keeps its original order -- correctness
-    over looks.
-
-    Several orders are drawn because a single random permutation of ~10 rows
-    often still leans one way by chance; keeping the draw with the smallest
-    |height_gradient| is what makes the result read as pattern-free.
+    A chunk is the run of consecutive boxes whose widths (plus gaps) fill one
+    row, so it is height-homogeneous like the rows the packer would build
+    from size order anyway. The compact packer fills the slide top-down, so
+    the chunk order is the vertical order of the rows: randomising it is what
+    stops "tallest rows on top" at the granularity of a single row, without
+    giving up the rows near-full weeks need in order to fit.
     """
-    out: list[Placement] = []
-    for slide in sorted({p.slide for p in placements}):
-        group = sorted((p for p in placements if p.slide == slide), key=lambda p: p.y_emu)
-        # Merge overlapping y-intervals into bands: (top, bottom, members).
-        bands: list[tuple[int, int, list[Placement]]] = []
-        for p in group:
-            bottom = p.y_emu + sizes[p.key].height_emu
-            if bands and p.y_emu < bands[-1][1]:
-                bands[-1] = (bands[-1][0], max(bands[-1][1], bottom), bands[-1][2] + [p])
-            else:
-                bands.append((p.y_emu, bottom, [p]))
-        restacked_bottom = bands[0][0] + sum(b[1] - b[0] for b in bands) + gap_emu * (len(bands) - 1)
-        if restacked_bottom > max_bottom_emu:
-            out.extend(group)
-            continue
-        best: tuple[float, list[Placement]] | None = None
-        for _ in range(BAND_DRAWS):
-            candidate = _restack(bands, rng.permutation(len(bands)), gap_emu)
-            score = abs(height_gradient([(p.y_emu, sizes[p.key].height_emu) for p in candidate]))
-            if best is None or score < best[0]:
-                best = (score, candidate)
-        out.extend(best[1])
-    return out
-
-
-def _restack(bands: list[tuple[int, int, list[Placement]]], order: np.ndarray, gap_emu: int) -> list[Placement]:
-    """Stack ``bands`` top-down in ``order``, keeping each band's internal offsets."""
-    out: list[Placement] = []
-    y = bands[0][0]  # keep the original top offset; _spread stretches the rest
-    for idx in order:
-        top, bottom, members = bands[idx]
-        out.extend(Placement(p.key, p.slide, p.x_emu, y + (p.y_emu - top)) for p in members)
-        y += (bottom - top) + gap_emu
-    return out
+    chunks: list[list[Box]] = []
+    current: list[Box] = []
+    used = 0
+    for box in size_ordered:
+        if current and used + gap_emu + box.width_emu > usable_width_emu:
+            chunks.append(current)
+            current, used = [], 0
+        used += box.width_emu + (gap_emu if current else 0)
+        current.append(box)
+    if current:
+        chunks.append(current)
+    return [box for idx in rng.permutation(len(chunks)) for box in chunks[idx]]
 
 
 def _spread(
